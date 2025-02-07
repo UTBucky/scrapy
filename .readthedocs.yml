@@ -15,5 +15,7 @@ python:
   install:
     - requirements: docs/requirements.txt
     - path: .
-- name: Code Coverage Summary
-  uses: irongut/CodeCoverageSummary@v1.3.0
+name: Code Coverage Summary
+uses: irongut/CodeCoverageSummary@v1.3.0
+with:
+  filname: test_closespider.py, test_command_fetch.py
