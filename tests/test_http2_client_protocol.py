@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import random
 import re
@@ -5,10 +7,12 @@ import shutil
 import string
 from ipaddress import IPv4Address
 from pathlib import Path
-from typing import Dict
+from tempfile import mkdtemp
+from typing import TYPE_CHECKING
 from unittest import mock, skipIf
 from urllib.parse import urlencode
 
+import pytest
 from twisted.internet import reactor
 from twisted.internet.defer import (
     CancelledError,
@@ -19,7 +23,6 @@ from twisted.internet.defer import (
 from twisted.internet.endpoints import SSL4ClientEndpoint, SSL4ServerEndpoint
 from twisted.internet.error import TimeoutError
 from twisted.internet.ssl import Certificate, PrivateCertificate, optionsForClientTLS
-from twisted.python.failure import Failure
 from twisted.trial.unittest import TestCase
 from twisted.web.client import URI, ResponseFailed
 from twisted.web.http import H2_ENABLED
@@ -31,6 +34,9 @@ from scrapy.http import JsonRequest, Request, Response
 from scrapy.settings import Settings
 from scrapy.spiders import Spider
 from tests.mockserver import LeafResource, Status, ssl_context_factory
+
+if TYPE_CHECKING:
+    from twisted.python.failure import Failure
 
 
 def generate_random_string(size):
@@ -147,7 +153,7 @@ class QueryParams(LeafResource):
         request.setHeader("Content-Type", "application/json; charset=UTF-8")
         request.setHeader("Content-Encoding", "UTF-8")
 
-        query_params: Dict[str, str] = {}
+        query_params: dict[str, str] = {}
         assert request.args is not None
         for k, v in request.args.items():
             query_params[str(k, "utf-8")] = str(v[0], "utf-8")
@@ -185,8 +191,7 @@ class Https2ClientProtocolTestCase(TestCase):
     certificate_file = Path(__file__).parent / "keys" / "localhost.crt"
 
     def _init_resource(self):
-        self.temp_directory = self.mktemp()
-        Path(self.temp_directory).mkdir()
+        self.temp_directory = mkdtemp()
         r = File(self.temp_directory)
         r.putChild(b"get-data-html-small", GetDataHtmlSmall())
         r.putChild(b"get-data-html-large", GetDataHtmlLarge())
@@ -254,7 +259,8 @@ class Https2ClientProtocolTestCase(TestCase):
         :param path: Should have / at the starting compulsorily if not empty
         :return: Complete url
         """
-        assert len(path) > 0 and (path[0] == "/" or path[0] == "&")
+        assert len(path) > 0
+        assert path[0] == "/" or path[0] == "&"
         return f"{self.scheme}://{self.hostname}:{self.port_number}{path}"
 
     def make_request(self, request: Request) -> Deferred:
@@ -275,7 +281,9 @@ class Https2ClientProtocolTestCase(TestCase):
             self.assertEqual(response.body, expected_body)
             self.assertEqual(response.request, request)
 
-            content_length = int(response.headers.get("Content-Length"))
+            content_length_header = response.headers.get("Content-Length")
+            assert content_length_header is not None
+            content_length = int(content_length_header)
             self.assertEqual(len(response.body), content_length)
 
         d = self.make_request(request)
@@ -320,11 +328,15 @@ class Https2ClientProtocolTestCase(TestCase):
             self.assertEqual(response.status, expected_status)
             self.assertEqual(response.request, request)
 
-            content_length = int(response.headers.get("Content-Length"))
+            content_length_header = response.headers.get("Content-Length")
+            assert content_length_header is not None
+            content_length = int(content_length_header)
             self.assertEqual(len(response.body), content_length)
 
             # Parse the body
-            content_encoding = str(response.headers[b"Content-Encoding"], "utf-8")
+            content_encoding_header = response.headers[b"Content-Encoding"]
+            assert content_encoding_header is not None
+            content_encoding = str(content_encoding_header, "utf-8")
             body = json.loads(str(response.body, content_encoding))
             self.assertIn("request-body", body)
             self.assertIn("extra-data", body)
@@ -395,7 +407,7 @@ class Https2ClientProtocolTestCase(TestCase):
             "scrapy.core.http2.protocol.PROTOCOL_NAME", return_value=b"not-h2"
         ):
             request = Request(url=self.get_url("/status?n=200"))
-            with self.assertRaises(ResponseFailed):
+            with pytest.raises(ResponseFailed):
                 yield self.make_request(request)
 
     def test_cancel_request(self):
@@ -549,7 +561,7 @@ class Https2ClientProtocolTestCase(TestCase):
         return DeferredList(d_list, consumeErrors=True, fireOnOneErrback=True)
 
     def test_invalid_request_type(self):
-        with self.assertRaises(TypeError):
+        with pytest.raises(TypeError):
             self.make_request("https://InvalidDataTypePassed.com")
 
     def test_query_parameters(self):
@@ -562,7 +574,9 @@ class Https2ClientProtocolTestCase(TestCase):
         request = Request(self.get_url(f"/query-params?{urlencode(params)}"))
 
         def assert_query_params(response: Response):
-            content_encoding = str(response.headers[b"Content-Encoding"], "utf-8")
+            content_encoding_header = response.headers[b"Content-Encoding"]
+            assert content_encoding_header is not None
+            content_encoding = str(content_encoding_header, "utf-8")
             data = json.loads(str(response.body, content_encoding))
             self.assertEqual(data, params)
 
@@ -592,6 +606,7 @@ class Https2ClientProtocolTestCase(TestCase):
         def assert_metadata(response: Response):
             self.assertEqual(response.request, request)
             self.assertIsInstance(response.certificate, Certificate)
+            assert response.certificate  # typing
             self.assertIsNotNone(response.certificate.original)
             self.assertEqual(
                 response.certificate.getIssuer(), self.client_certificate.getIssuer()

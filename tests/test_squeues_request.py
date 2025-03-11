@@ -1,7 +1,12 @@
+"""
+Queues that handle requests
+"""
+
 import shutil
 import tempfile
 import unittest
 
+import pytest
 import queuelib
 
 from scrapy.http import Request
@@ -16,16 +21,12 @@ from scrapy.squeues import (
 )
 from scrapy.utils.test import get_crawler
 
-"""
-Queues that handle requests
-"""
-
 
 class BaseQueueTestCase(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="scrapy-queue-tests-")
         self.qpath = self.tempfilename()
-        self.qdir = self.mkdtemp()
+        self.qdir = tempfile.mkdtemp()
         self.crawler = get_crawler(Spider)
 
     def tearDown(self):
@@ -41,7 +42,7 @@ class BaseQueueTestCase(unittest.TestCase):
 
 class RequestQueueTestMixin:
     def queue(self):
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def test_one_element_with_peek(self):
         if not hasattr(queuelib.queue.FifoMemoryQueue, "peek"):
@@ -69,9 +70,9 @@ class RequestQueueTestMixin:
         req = Request("http://www.example.com")
         q.push(req)
         self.assertEqual(len(q), 1)
-        with self.assertRaises(
+        with pytest.raises(
             NotImplementedError,
-            msg="The underlying queue class does not implement 'peek'",
+            match="The underlying queue class does not implement 'peek'",
         ):
             q.peek()
         self.assertEqual(q.pop().url, req.url)
@@ -120,9 +121,9 @@ class FifoQueueMixin(RequestQueueTestMixin):
         q.push(req1)
         q.push(req2)
         q.push(req3)
-        with self.assertRaises(
+        with pytest.raises(
             NotImplementedError,
-            msg="The underlying queue class does not implement 'peek'",
+            match="The underlying queue class does not implement 'peek'",
         ):
             q.peek()
         self.assertEqual(len(q), 3)
@@ -176,9 +177,9 @@ class LifoQueueMixin(RequestQueueTestMixin):
         q.push(req1)
         q.push(req2)
         q.push(req3)
-        with self.assertRaises(
+        with pytest.raises(
             NotImplementedError,
-            msg="The underlying queue class does not implement 'peek'",
+            match="The underlying queue class does not implement 'peek'",
         ):
             q.peek()
         self.assertEqual(len(q), 3)

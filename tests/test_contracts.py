@@ -1,5 +1,6 @@
 from unittest import TextTestResult
 
+import pytest
 from twisted.internet import defer
 from twisted.python import failure
 from twisted.trial import unittest
@@ -8,6 +9,7 @@ from scrapy import FormRequest
 from scrapy.contracts import Contract, ContractsManager
 from scrapy.contracts.default import (
     CallbackKeywordArgumentsContract,
+    MetadataContract,
     ReturnsContract,
     ScrapesContract,
     UrlContract,
@@ -20,13 +22,17 @@ from scrapy.utils.test import get_crawler
 from tests.mockserver import MockServer
 
 
-class TestItem(Item):
+class DemoItem(Item):
     name = Field()
     url = Field()
 
 
 class ResponseMock:
     url = "http://scrapy.org"
+
+
+class ResponseMetaMock(ResponseMock):
+    meta = None
 
 
 class CustomSuccessContract(Contract):
@@ -53,11 +59,18 @@ class CustomFormContract(Contract):
         return args
 
 
-class TestSpider(Spider):
+class DemoSpider(Spider):
     name = "demo_spider"
 
     def returns_request(self, response):
         """method which returns request
+        @url http://scrapy.org
+        @returns requests 1
+        """
+        return Request("http://scrapy.org", callback=self.returns_item)
+
+    async def returns_request_async(self, response):
+        """async method which returns request
         @url http://scrapy.org
         @returns requests 1
         """
@@ -68,7 +81,7 @@ class TestSpider(Spider):
         @url http://scrapy.org
         @returns items 1 1
         """
-        return TestItem(url=response.url)
+        return DemoItem(url=response.url)
 
     def returns_request_cb_kwargs(self, response, url):
         """method which returns request
@@ -84,7 +97,7 @@ class TestSpider(Spider):
         @cb_kwargs {"name": "Scrapy"}
         @returns items 1 1
         """
-        return TestItem(name=name, url=response.url)
+        return DemoItem(name=name, url=response.url)
 
     def returns_item_cb_kwargs_error_unexpected_keyword(self, response):
         """method which returns item
@@ -92,14 +105,14 @@ class TestSpider(Spider):
         @cb_kwargs {"arg": "value"}
         @returns items 1 1
         """
-        return TestItem(url=response.url)
+        return DemoItem(url=response.url)
 
     def returns_item_cb_kwargs_error_missing_argument(self, response, arg):
         """method which returns item
         @url http://scrapy.org
         @returns items 1 1
         """
-        return TestItem(url=response.url)
+        return DemoItem(url=response.url)
 
     def returns_dict_item(self, response):
         """method which returns item
@@ -113,7 +126,7 @@ class TestSpider(Spider):
         @url http://scrapy.org
         @returns items 0 0
         """
-        return TestItem(url=response.url)
+        return DemoItem(url=response.url)
 
     def returns_dict_fail(self, response):
         """method which returns item
@@ -128,7 +141,7 @@ class TestSpider(Spider):
         @returns items 1 1
         @scrapes name url
         """
-        return TestItem(name="test", url=response.url)
+        return DemoItem(name="test", url=response.url)
 
     def scrapes_dict_item_ok(self, response):
         """returns item with name and url
@@ -144,7 +157,7 @@ class TestSpider(Spider):
         @returns items 1 1
         @scrapes name url
         """
-        return TestItem(url=response.url)
+        return DemoItem(url=response.url)
 
     def scrapes_dict_item_fail(self, response):
         """returns item with no name
@@ -166,14 +179,50 @@ class TestSpider(Spider):
         """method with no url
         @returns items 1 1
         """
-        pass
 
     def custom_form(self, response):
         """
         @url http://scrapy.org
         @custom_form
         """
-        pass
+
+    def invalid_regex(self, response):
+        """method with invalid regex
+        @ Scrapy is awsome
+        """
+
+    def invalid_regex_with_valid_contract(self, response):
+        """method with invalid regex
+        @ scrapy is awsome
+        @url http://scrapy.org
+        """
+
+    def returns_request_meta(self, response):
+        """method which returns request
+        @url https://example.org
+        @meta {"cookiejar": "session1"}
+        @returns requests 1
+        """
+        return Request(
+            "https://example.org", meta=response.meta, callback=self.returns_item_meta
+        )
+
+    def returns_item_meta(self, response):
+        """method which returns item
+        @url http://scrapy.org
+        @meta {"key": "example"}
+        @returns items 1 1
+        """
+        return DemoItem(name="example", url=response.url)
+
+    def returns_error_missing_meta(self, response):
+        """method which depends of metadata be defined
+
+        @url http://scrapy.org
+        @returns items 1
+        """
+        key = response.meta["key"]
+        yield {key: "value"}
 
 
 class CustomContractSuccessSpider(Spider):
@@ -183,7 +232,6 @@ class CustomContractSuccessSpider(Spider):
         """
         @custom_success_contract
         """
-        pass
 
 
 class CustomContractFailSpider(Spider):
@@ -193,17 +241,17 @@ class CustomContractFailSpider(Spider):
         """
         @custom_fail_contract
         """
-        pass
 
 
-class InheritsTestSpider(TestSpider):
+class InheritsDemoSpider(DemoSpider):
     name = "inherits_demo_spider"
 
 
-class ContractsManagerTest(unittest.TestCase):
+class TestContractsManager(unittest.TestCase):
     contracts = [
         UrlContract,
         CallbackKeywordArgumentsContract,
+        MetadataContract,
         ReturnsContract,
         ScrapesContract,
         CustomFormContract,
@@ -216,70 +264,65 @@ class ContractsManagerTest(unittest.TestCase):
         self.results = TextTestResult(stream=None, descriptions=False, verbosity=0)
 
     def should_succeed(self):
-        self.assertFalse(self.results.failures)
-        self.assertFalse(self.results.errors)
+        assert not self.results.failures
+        assert not self.results.errors
 
     def should_fail(self):
-        self.assertTrue(self.results.failures)
-        self.assertFalse(self.results.errors)
+        assert self.results.failures
+        assert not self.results.errors
 
     def should_error(self):
-        self.assertTrue(self.results.errors)
+        assert self.results.errors
 
     def test_contracts(self):
-        spider = TestSpider()
+        spider = DemoSpider()
 
         # extract contracts correctly
         contracts = self.conman.extract_contracts(spider.returns_request)
-        self.assertEqual(len(contracts), 2)
-        self.assertEqual(
-            frozenset(type(x) for x in contracts),
-            frozenset([UrlContract, ReturnsContract]),
+        assert len(contracts) == 2
+        assert frozenset(type(x) for x in contracts) == frozenset(
+            [UrlContract, ReturnsContract]
         )
 
         # returns request for valid method
         request = self.conman.from_method(spider.returns_request, self.results)
-        self.assertNotEqual(request, None)
+        assert request is not None
 
         # no request for missing url
         request = self.conman.from_method(spider.parse_no_url, self.results)
-        self.assertEqual(request, None)
+        assert request is None
 
     def test_cb_kwargs(self):
-        spider = TestSpider()
+        spider = DemoSpider()
         response = ResponseMock()
 
         # extract contracts correctly
         contracts = self.conman.extract_contracts(spider.returns_request_cb_kwargs)
-        self.assertEqual(len(contracts), 3)
-        self.assertEqual(
-            frozenset(type(x) for x in contracts),
-            frozenset([UrlContract, CallbackKeywordArgumentsContract, ReturnsContract]),
+        assert len(contracts) == 3
+        assert frozenset(type(x) for x in contracts) == frozenset(
+            [UrlContract, CallbackKeywordArgumentsContract, ReturnsContract]
         )
 
         contracts = self.conman.extract_contracts(spider.returns_item_cb_kwargs)
-        self.assertEqual(len(contracts), 3)
-        self.assertEqual(
-            frozenset(type(x) for x in contracts),
-            frozenset([UrlContract, CallbackKeywordArgumentsContract, ReturnsContract]),
+        assert len(contracts) == 3
+        assert frozenset(type(x) for x in contracts) == frozenset(
+            [UrlContract, CallbackKeywordArgumentsContract, ReturnsContract]
         )
 
         contracts = self.conman.extract_contracts(
             spider.returns_item_cb_kwargs_error_unexpected_keyword
         )
-        self.assertEqual(len(contracts), 3)
-        self.assertEqual(
-            frozenset(type(x) for x in contracts),
-            frozenset([UrlContract, CallbackKeywordArgumentsContract, ReturnsContract]),
+        assert len(contracts) == 3
+        assert frozenset(type(x) for x in contracts) == frozenset(
+            [UrlContract, CallbackKeywordArgumentsContract, ReturnsContract]
         )
 
         contracts = self.conman.extract_contracts(
             spider.returns_item_cb_kwargs_error_missing_argument
         )
-        self.assertEqual(len(contracts), 2)
-        self.assertEqual(
-            frozenset(type(x) for x in contracts),
-            frozenset([UrlContract, ReturnsContract]),
+        assert len(contracts) == 2
+        assert frozenset(type(x) for x in contracts) == frozenset(
+            [UrlContract, ReturnsContract]
         )
 
         # returns_request
@@ -308,8 +351,52 @@ class ContractsManagerTest(unittest.TestCase):
         request.callback(response, **request.cb_kwargs)
         self.should_error()
 
+    def test_meta(self):
+        spider = DemoSpider()
+
+        # extract contracts correctly
+        contracts = self.conman.extract_contracts(spider.returns_request_meta)
+        assert len(contracts) == 3
+        assert frozenset(type(x) for x in contracts) == frozenset(
+            [UrlContract, MetadataContract, ReturnsContract]
+        )
+
+        contracts = self.conman.extract_contracts(spider.returns_item_meta)
+        assert len(contracts) == 3
+        assert frozenset(type(x) for x in contracts) == frozenset(
+            [UrlContract, MetadataContract, ReturnsContract]
+        )
+
+        response = ResponseMetaMock()
+
+        # returns_request
+        request = self.conman.from_method(spider.returns_request_meta, self.results)
+        assert request.meta["cookiejar"] == "session1"
+        response.meta = request.meta
+        request.callback(response)
+        assert response.meta["cookiejar"] == "session1"
+        self.should_succeed()
+
+        response = ResponseMetaMock()
+
+        # returns_item
+        request = self.conman.from_method(spider.returns_item_meta, self.results)
+        assert request.meta["key"] == "example"
+        response.meta = request.meta
+        request.callback(ResponseMetaMock)
+        assert response.meta["key"] == "example"
+        self.should_succeed()
+
+        response = ResponseMetaMock()
+
+        request = self.conman.from_method(
+            spider.returns_error_missing_meta, self.results
+        )
+        request.callback(response)
+        self.should_error()
+
     def test_returns(self):
-        spider = TestSpider()
+        spider = DemoSpider()
         response = ResponseMock()
 
         # returns_item
@@ -337,8 +424,16 @@ class ContractsManagerTest(unittest.TestCase):
         request.callback(response)
         self.should_fail()
 
+    def test_returns_async(self):
+        spider = DemoSpider()
+        response = ResponseMock()
+
+        request = self.conman.from_method(spider.returns_request_async, self.results)
+        request.callback(response)
+        self.should_error()
+
     def test_scrapes(self):
-        spider = TestSpider()
+        spider = DemoSpider()
         response = ResponseMock()
 
         # scrapes_item_ok
@@ -370,6 +465,21 @@ class ContractsManagerTest(unittest.TestCase):
         message = "ContractFail: Missing fields: name, url"
         assert message in self.results.failures[-1][-1]
 
+    def test_regex(self):
+        spider = DemoSpider()
+        response = ResponseMock()
+
+        # invalid regex
+        request = self.conman.from_method(spider.invalid_regex, self.results)
+        self.should_succeed()
+
+        # invalid regex with valid contract
+        request = self.conman.from_method(
+            spider.invalid_regex_with_valid_contract, self.results
+        )
+        self.should_succeed()
+        request.callback(response)
+
     def test_custom_contracts(self):
         self.conman.from_spider(CustomContractSuccessSpider(), self.results)
         self.should_succeed()
@@ -378,7 +488,7 @@ class ContractsManagerTest(unittest.TestCase):
         self.should_error()
 
     def test_errback(self):
-        spider = TestSpider()
+        spider = DemoSpider()
         response = ResponseMock()
 
         try:
@@ -389,8 +499,8 @@ class ContractsManagerTest(unittest.TestCase):
         request = self.conman.from_method(spider.returns_request, self.results)
         request.errback(failure_mock)
 
-        self.assertFalse(self.results.failures)
-        self.assertTrue(self.results.errors)
+        assert not self.results.failures
+        assert self.results.errors
 
     @defer.inlineCallbacks
     def test_same_url(self):
@@ -401,19 +511,19 @@ class ContractsManagerTest(unittest.TestCase):
                 super().__init__(*args, **kwargs)
                 self.visited = 0
 
-            def start_requests(s):
-                return self.conman.from_spider(s, self.results)
+            def start_requests(self_):  # pylint: disable=no-self-argument
+                return self.conman.from_spider(self_, self.results)
 
             def parse_first(self, response):
                 self.visited += 1
-                return TestItem()
+                return DemoItem()
 
             def parse_second(self, response):
                 self.visited += 1
-                return TestItem()
+                return DemoItem()
 
         with MockServer() as mockserver:
-            contract_doc = f'@url {mockserver.url("/status?n=200")}'
+            contract_doc = f"@url {mockserver.url('/status?n=200')}"
 
             TestSameUrlSpider.parse_first.__doc__ = contract_doc
             TestSameUrlSpider.parse_second.__doc__ = contract_doc
@@ -421,16 +531,63 @@ class ContractsManagerTest(unittest.TestCase):
             crawler = get_crawler(TestSameUrlSpider)
             yield crawler.crawl()
 
-        self.assertEqual(crawler.spider.visited, 2)
+        assert crawler.spider.visited == 2
 
     def test_form_contract(self):
-        spider = TestSpider()
+        spider = DemoSpider()
         request = self.conman.from_method(spider.custom_form, self.results)
-        self.assertEqual(request.method, "POST")
-        self.assertIsInstance(request, FormRequest)
+        assert request.method == "POST"
+        assert isinstance(request, FormRequest)
 
     def test_inherited_contracts(self):
-        spider = InheritsTestSpider()
+        spider = InheritsDemoSpider()
 
         requests = self.conman.from_spider(spider, self.results)
-        self.assertTrue(requests)
+        assert requests
+
+
+class CustomFailContractPreProcess(Contract):
+    name = "test_contract"
+
+    def pre_process(self, response):
+        raise KeyboardInterrupt("Pre-process exception")
+
+
+class CustomFailContractPostProcess(Contract):
+    name = "test_contract"
+
+    def post_process(self, response):
+        raise KeyboardInterrupt("Post-process exception")
+
+
+class TestCustomContractPrePostProcess:
+    def setup_method(self):
+        self.results = TextTestResult(stream=None, descriptions=False, verbosity=0)
+
+    def test_pre_hook_keyboard_interrupt(self):
+        spider = DemoSpider()
+        response = ResponseMock()
+        contract = CustomFailContractPreProcess(spider.returns_request)
+        conman = ContractsManager([contract])
+
+        request = conman.from_method(spider.returns_request, self.results)
+        contract.add_pre_hook(request, self.results)
+        with pytest.raises(KeyboardInterrupt, match="Pre-process exception"):
+            request.callback(response, **request.cb_kwargs)
+
+        assert not self.results.failures
+        assert not self.results.errors
+
+    def test_post_hook_keyboard_interrupt(self):
+        spider = DemoSpider()
+        response = ResponseMock()
+        contract = CustomFailContractPostProcess(spider.returns_request)
+        conman = ContractsManager([contract])
+
+        request = conman.from_method(spider.returns_request, self.results)
+        contract.add_post_hook(request, self.results)
+        with pytest.raises(KeyboardInterrupt, match="Post-process exception"):
+            request.callback(response, **request.cb_kwargs)
+
+        assert not self.results.failures
+        assert not self.results.errors

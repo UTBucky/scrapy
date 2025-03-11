@@ -3,8 +3,11 @@ import re
 import unittest
 import warnings
 import xmlrpc.client
+from typing import Any
 from unittest import mock
-from urllib.parse import parse_qs, unquote_to_bytes, urlparse
+from urllib.parse import parse_qs, unquote_to_bytes
+
+import pytest
 
 from scrapy.http import (
     FormRequest,
@@ -15,21 +18,24 @@ from scrapy.http import (
     XmlRpcRequest,
 )
 from scrapy.http.request import NO_CALLBACK
+from scrapy.utils.httpobj import urlparse_cached
 from scrapy.utils.python import to_bytes, to_unicode
 
 
 class RequestTest(unittest.TestCase):
     request_class = Request
     default_method = "GET"
-    default_headers = {}
-    default_meta = {}
+    default_headers: dict[bytes, list[bytes]] = {}
+    default_meta: dict[str, Any] = {}
 
     def test_init(self):
         # Request requires url in the __init__ method
-        self.assertRaises(Exception, self.request_class)
+        with pytest.raises(TypeError):
+            self.request_class()
 
         # url argument must be basestring
-        self.assertRaises(TypeError, self.request_class, 123)
+        with pytest.raises(TypeError):
+            self.request_class(123)
         r = self.request_class("http://www.example.com")
 
         r = self.request_class("http://www.example.com")
@@ -62,9 +68,13 @@ class RequestTest(unittest.TestCase):
         self.request_class("data:,Hello%2C%20World!")
 
     def test_url_no_scheme(self):
-        self.assertRaises(ValueError, self.request_class, "foo")
-        self.assertRaises(ValueError, self.request_class, "/foo/")
-        self.assertRaises(ValueError, self.request_class, "/foo:bar")
+        msg = "Missing scheme in request url:"
+        with pytest.raises(ValueError, match=msg):
+            self.request_class("foo")
+        with pytest.raises(ValueError, match=msg):
+            self.request_class("/foo/")
+        with pytest.raises(ValueError, match=msg):
+            self.request_class("/foo:bar")
 
     def test_headers(self):
         # Different ways of setting headers attribute
@@ -141,7 +151,7 @@ class RequestTest(unittest.TestCase):
         # percent-escaping sequences that do not match valid UTF-8 sequences
         # should be kept untouched (just upper-cased perhaps)
         #
-        # See https://tools.ietf.org/html/rfc3987#section-3.2
+        # See https://datatracker.ietf.org/doc/html/rfc3987#section-3.2
         #
         # "Conversions from URIs to IRIs MUST NOT use any character encoding
         # other than UTF-8 in steps 3 and 4, even if it might be possible to
@@ -185,18 +195,6 @@ class RequestTest(unittest.TestCase):
         assert isinstance(r4.body, bytes)
         self.assertEqual(r4.body, b"Price: \xa3100")
 
-    def test_ajax_url(self):
-        # ascii url
-        r = self.request_class(url="http://www.example.com/ajax.html#!key=value")
-        self.assertEqual(
-            r.url, "http://www.example.com/ajax.html?_escaped_fragment_=key%3Dvalue"
-        )
-        # unicode url
-        r = self.request_class(url="http://www.example.com/ajax.html#!key=value")
-        self.assertEqual(
-            r.url, "http://www.example.com/ajax.html?_escaped_fragment_=key%3Dvalue"
-        )
-
     def test_copy(self):
         """Test Request copy"""
 
@@ -224,9 +222,9 @@ class RequestTest(unittest.TestCase):
         self.assertEqual(r1.flags, r2.flags)
 
         # make sure cb_kwargs dict is shallow copied
-        assert (
-            r1.cb_kwargs is not r2.cb_kwargs
-        ), "cb_kwargs must be a shallow copy, not identical"
+        assert r1.cb_kwargs is not r2.cb_kwargs, (
+            "cb_kwargs must be a shallow copy, not identical"
+        )
         self.assertEqual(r1.cb_kwargs, r2.cb_kwargs)
 
         # make sure meta dict is shallow copied
@@ -234,9 +232,9 @@ class RequestTest(unittest.TestCase):
         self.assertEqual(r1.meta, r2.meta)
 
         # make sure headers attribute is shallow copied
-        assert (
-            r1.headers is not r2.headers
-        ), "headers must be a shallow copy, not identical"
+        assert r1.headers is not r2.headers, (
+            "headers must be a shallow copy, not identical"
+        )
         self.assertEqual(r1.headers, r2.headers)
         self.assertEqual(r1.encoding, r2.encoding)
         self.assertEqual(r1.dont_filter, r2.dont_filter)
@@ -283,8 +281,10 @@ class RequestTest(unittest.TestCase):
 
     def test_immutable_attributes(self):
         r = self.request_class("http://example.com")
-        self.assertRaises(AttributeError, setattr, r, "url", "http://example2.com")
-        self.assertRaises(AttributeError, setattr, r, "body", "xxx")
+        with pytest.raises(AttributeError):
+            r.url = "http://example2.com"
+        with pytest.raises(AttributeError):
+            r.body = "xxx"
 
     def test_callback_and_errback(self):
         def a_function():
@@ -319,11 +319,11 @@ class RequestTest(unittest.TestCase):
         self.assertIs(r5.errback, NO_CALLBACK)
 
     def test_callback_and_errback_type(self):
-        with self.assertRaises(TypeError):
+        with pytest.raises(TypeError):
             self.request_class("http://example.com", callback="a_function")
-        with self.assertRaises(TypeError):
+        with pytest.raises(TypeError):
             self.request_class("http://example.com", errback="a_function")
-        with self.assertRaises(TypeError):
+        with pytest.raises(TypeError):
             self.request_class(
                 url="http://example.com",
                 callback="a_function",
@@ -331,7 +331,7 @@ class RequestTest(unittest.TestCase):
             )
 
     def test_no_callback(self):
-        with self.assertRaises(RuntimeError):
+        with pytest.raises(RuntimeError):
             NO_CALLBACK()
 
     def test_from_curl(self):
@@ -413,13 +413,11 @@ class RequestTest(unittest.TestCase):
 
         # If `ignore_unknown_options` is set to `False` it raises an error with
         # the unknown options: --foo and -z
-        self.assertRaises(
-            ValueError,
-            lambda: self.request_class.from_curl(
+        with pytest.raises(ValueError, match="Unrecognized options:"):
+            self.request_class.from_curl(
                 'curl -X PATCH "http://example.org" --foo -z',
                 ignore_unknown_options=False,
-            ),
-        )
+            )
 
 
 class FormRequestTest(RequestTest):
@@ -438,7 +436,7 @@ class FormRequestTest(RequestTest):
         data = (("a", "one"), ("a", "two"), ("b", "2"))
         url = self.request_class(
             "http://www.example.com/?a=0&b=1&c=3#fragment", method="GET", formdata=data
-        ).url.split("#")[0]
+        ).url.split("#", maxsplit=1)[0]
         fs = _qs(self.request_class(url, method="GET", formdata=data))
         self.assertEqual(set(fs[b"a"]), {b"one", b"two"})
         self.assertEqual(fs[b"b"], [b"2"])
@@ -616,8 +614,8 @@ class FormRequestTest(RequestTest):
             method="GET",
             formdata=(("foo", "bar"), ("foo", "baz")),
         )
-        self.assertEqual(urlparse(req.url).hostname, "www.example.com")
-        self.assertEqual(urlparse(req.url).query, "foo=bar&foo=baz")
+        self.assertEqual(urlparse_cached(req).hostname, "www.example.com")
+        self.assertEqual(urlparse_cached(req).query, "foo=bar&foo=baz")
 
     def test_from_response_override_duplicate_form_key(self):
         response = _buildresponse(
@@ -665,8 +663,8 @@ class FormRequestTest(RequestTest):
             response, formdata={"one": ["two", "three"], "six": "seven"}
         )
         self.assertEqual(r1.method, "GET")
-        self.assertEqual(urlparse(r1.url).hostname, "www.example.com")
-        self.assertEqual(urlparse(r1.url).path, "/this/get.php")
+        self.assertEqual(urlparse_cached(r1).hostname, "www.example.com")
+        self.assertEqual(urlparse_cached(r1).path, "/this/get.php")
         fs = _qs(r1)
         self.assertEqual(set(fs[b"test"]), {b"val1", b"val2"})
         self.assertEqual(set(fs[b"one"]), {b"two", b"three"})
@@ -907,12 +905,11 @@ class FormRequestTest(RequestTest):
             <input type="submit" name="clickable2" value="clicked2">
             </form>"""
         )
-        self.assertRaises(
+        with pytest.raises(
             ValueError,
-            self.request_class.from_response,
-            response,
-            clickdata={"type": "submit"},
-        )
+            match="Multiple elements found .* matching the criteria in clickdata",
+        ):
+            self.request_class.from_response(response, clickdata={"type": "submit"})
 
     def test_from_response_non_matching_clickdata(self):
         response = _buildresponse(
@@ -920,12 +917,12 @@ class FormRequestTest(RequestTest):
             <input type="submit" name="clickable" value="clicked">
             </form>"""
         )
-        self.assertRaises(
-            ValueError,
-            self.request_class.from_response,
-            response,
-            clickdata={"nonexistent": "notme"},
-        )
+        with pytest.raises(
+            ValueError, match="No clickable element matching clickdata:"
+        ):
+            self.request_class.from_response(
+                response, clickdata={"nonexistent": "notme"}
+            )
 
     def test_from_response_nr_index_clickdata(self):
         response = _buildresponse(
@@ -947,13 +944,15 @@ class FormRequestTest(RequestTest):
             </form>
             """
         )
-        self.assertRaises(
-            ValueError, self.request_class.from_response, response, clickdata={"nr": 1}
-        )
+        with pytest.raises(
+            ValueError, match="No clickable element matching clickdata:"
+        ):
+            self.request_class.from_response(response, clickdata={"nr": 1})
 
     def test_from_response_errors_noform(self):
         response = _buildresponse("""<html></html>""")
-        self.assertRaises(ValueError, self.request_class.from_response, response)
+        with pytest.raises(ValueError, match="No <form> element found in"):
+            self.request_class.from_response(response)
 
     def test_from_response_invalid_html5(self):
         response = _buildresponse(
@@ -973,9 +972,8 @@ class FormRequestTest(RequestTest):
             <input type="hidden" name="test2" value="xxx">
             </form>"""
         )
-        self.assertRaises(
-            IndexError, self.request_class.from_response, response, formnumber=1
-        )
+        with pytest.raises(IndexError):
+            self.request_class.from_response(response, formnumber=1)
 
     def test_from_response_noformname(self):
         response = _buildresponse(
@@ -1031,13 +1029,8 @@ class FormRequestTest(RequestTest):
             <input type="hidden" name="two" value="2">
             </form>"""
         )
-        self.assertRaises(
-            IndexError,
-            self.request_class.from_response,
-            response,
-            formname="form3",
-            formnumber=2,
-        )
+        with pytest.raises(IndexError):
+            self.request_class.from_response(response, formname="form3", formnumber=2)
 
     def test_from_response_formid_exists(self):
         response = _buildresponse(
@@ -1096,13 +1089,8 @@ class FormRequestTest(RequestTest):
             <input type="hidden" name="two" value="2">
             </form>"""
         )
-        self.assertRaises(
-            IndexError,
-            self.request_class.from_response,
-            response,
-            formid="form3",
-            formnumber=2,
-        )
+        with pytest.raises(IndexError):
+            self.request_class.from_response(response, formid="form3", formnumber=2)
 
     def test_from_response_select(self):
         res = _buildresponse(
@@ -1255,12 +1243,10 @@ class FormRequestTest(RequestTest):
         fs = _qs(r1)
         self.assertEqual(fs[b"three"], [b"3"])
 
-        self.assertRaises(
-            ValueError,
-            self.request_class.from_response,
-            response,
-            formxpath="//form/input[@name='abc']",
-        )
+        with pytest.raises(ValueError, match="No <form> element found with"):
+            self.request_class.from_response(
+                response, formxpath="//form/input[@name='abc']"
+            )
 
     def test_from_response_unicode_xpath(self):
         response = _buildresponse(b'<form name="\xd1\x8a"></form>')
@@ -1271,13 +1257,8 @@ class FormRequestTest(RequestTest):
         self.assertEqual(fs, {})
 
         xpath = "//form[@name='\u03b1']"
-        self.assertRaisesRegex(
-            ValueError,
-            re.escape(xpath),
-            self.request_class.from_response,
-            response,
-            formxpath=xpath,
-        )
+        with pytest.raises(ValueError, match=re.escape(xpath)):
+            self.request_class.from_response(response, formxpath=xpath)
 
     def test_from_response_button_submit(self):
         response = _buildresponse(
@@ -1403,12 +1384,8 @@ class FormRequestTest(RequestTest):
         fs = _qs(r1)
         self.assertEqual(fs[b"three"], [b"3"])
 
-        self.assertRaises(
-            ValueError,
-            self.request_class.from_response,
-            response,
-            formcss="input[name='abc']",
-        )
+        with pytest.raises(ValueError, match="No <form> element found with"):
+            self.request_class.from_response(response, formcss="input[name='abc']")
 
     def test_from_response_valid_form_methods(self):
         form_methods = [
@@ -1425,6 +1402,52 @@ class FormRequestTest(RequestTest):
             r = self.request_class.from_response(response)
             self.assertEqual(r.method, expected)
 
+    def test_form_response_with_invalid_formdata_type_error(self):
+        """Test that a ValueError is raised for non-iterable and non-dict formdata input"""
+        response = _buildresponse(
+            """<html><body>
+            <form action="/submit" method="post">
+                <input type="text" name="test" value="value">
+            </form>
+            </body></html>"""
+        )
+        with pytest.raises(
+            ValueError, match="formdata should be a dict or iterable of tuples"
+        ):
+            FormRequest.from_response(response, formdata=123)
+
+    def test_form_response_with_custom_invalid_formdata_value_error(self):
+        """Test that a ValueError is raised for fault-inducing iterable formdata input"""
+        response = _buildresponse(
+            """<html><body>
+                <form action="/submit" method="post">
+                    <input type="text" name="test" value="value">
+                </form>
+            </body></html>"""
+        )
+
+        with pytest.raises(
+            ValueError, match="formdata should be a dict or iterable of tuples"
+        ):
+            FormRequest.from_response(response, formdata=("a",))
+
+    def test_get_form_with_xpath_no_form_parent(self):
+        """Test that _get_from raised a ValueError when an XPath selects an element
+        not nested within a <form> and no <form> parent is found"""
+        response = _buildresponse(
+            """<html><body>
+                <div id="outside-form">
+                    <p>This paragraph is not inside a form.</p>
+                </div>
+                <form action="/submit" method="post">
+                    <input type="text" name="inside-form" value="">
+                </form>
+            </body></html>"""
+        )
+
+        with pytest.raises(ValueError, match="No <form> element found with"):
+            FormRequest.from_response(response, formxpath='//div[@id="outside-form"]/p')
+
 
 def _buildresponse(body, **kwargs):
     kwargs.setdefault("body", body)
@@ -1434,10 +1457,7 @@ def _buildresponse(body, **kwargs):
 
 
 def _qs(req, encoding="utf-8", to_unicode=False):
-    if req.method == "POST":
-        qs = req.body
-    else:
-        qs = req.url.partition("?")[2]
+    qs = req.body if req.method == "POST" else req.url.partition("?")[2]
     uqs = unquote_to_bytes(qs)
     if to_unicode:
         uqs = uqs.decode(encoding)
@@ -1468,8 +1488,10 @@ class XmlRpcRequestTest(RequestTest):
         self._test_request(params=("response",), methodresponse="login")
         self._test_request(params=("pas£",), encoding="utf-8")
         self._test_request(params=(None,), allow_none=1)
-        self.assertRaises(TypeError, self._test_request)
-        self.assertRaises(TypeError, self._test_request, params=(None,))
+        with pytest.raises(TypeError):
+            self._test_request()
+        with pytest.raises(TypeError):
+            self._test_request(params=(None,))
 
     def test_latin1(self):
         self._test_request(params=("pas£",), encoding="latin1")
@@ -1641,10 +1663,25 @@ class JsonRequestTest(RequestTest):
             self.assertEqual(kwargs["ensure_ascii"], True)
             self.assertEqual(kwargs["allow_nan"], True)
 
+    def test_replacement_both_body_and_data_warns(self):
+        """Test that we get a warning if both body and data are passed"""
+        body1 = None
+        body2 = b"body"
+        data1 = {
+            "name1": "value1",
+        }
+        data2 = {
+            "name2": "value2",
+        }
+        r1 = self.request_class(url="http://www.example.com/", data=data1, body=body1)
+
+        with warnings.catch_warnings(record=True) as _warnings:
+            r1.replace(data=data2, body=body2)
+            self.assertIn(
+                "Both body and data passed. data will be ignored",
+                str(_warnings[0].message),
+            )
+
     def tearDown(self):
         warnings.resetwarnings()
         super().tearDown()
-
-
-if __name__ == "__main__":
-    unittest.main()

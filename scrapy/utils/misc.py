@@ -1,4 +1,7 @@
 """Helper functions which don't fit anywhere else"""
+
+from __future__ import annotations
+
 import ast
 import hashlib
 import inspect
@@ -6,22 +9,30 @@ import os
 import re
 import warnings
 from collections import deque
+from collections.abc import Iterable
 from contextlib import contextmanager
 from functools import partial
 from importlib import import_module
 from pkgutil import iter_modules
+from typing import IO, TYPE_CHECKING, Any, TypeVar, cast
 
-from w3lib.html import replace_entities
-
+from scrapy.exceptions import ScrapyDeprecationWarning
 from scrapy.item import Item
 from scrapy.utils.datatypes import LocalWeakReferencedCache
-from scrapy.utils.deprecate import ScrapyDeprecationWarning
-from scrapy.utils.python import flatten, to_unicode
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+    from types import ModuleType
+
+    from scrapy import Spider
+    from scrapy.crawler import Crawler
+
 
 _ITERABLE_SINGLE_VALUES = dict, Item, str, bytes
+T = TypeVar("T")
 
 
-def arg_to_iter(arg):
+def arg_to_iter(arg: Any) -> Iterable[Any]:
     """Convert an argument to an iterable. The argument can be a None, single
     value, or an iterable.
 
@@ -30,11 +41,11 @@ def arg_to_iter(arg):
     if arg is None:
         return []
     if not isinstance(arg, _ITERABLE_SINGLE_VALUES) and hasattr(arg, "__iter__"):
-        return arg
+        return cast(Iterable[Any], arg)
     return [arg]
 
 
-def load_object(path):
+def load_object(path: str | Callable[..., Any]) -> Any:
     """Load an object given its absolute object path, and return it.
 
     The object can be the import path of a class, function, variable or an
@@ -48,7 +59,7 @@ def load_object(path):
         if callable(path):
             return path
         raise TypeError(
-            "Unexpected argument type, expected string " f"or object, got: {type(path)}"
+            f"Unexpected argument type, expected string or object, got: {type(path)}"
         )
 
     try:
@@ -67,7 +78,7 @@ def load_object(path):
     return obj
 
 
-def walk_modules(path):
+def walk_modules(path: str) -> list[ModuleType]:
     """Loads a module and all its submodules from the given module path and
     returns them. If *any* module throws an exception while importing, that
     exception is thrown back.
@@ -75,7 +86,7 @@ def walk_modules(path):
     For example: walk_modules('scrapy.utils')
     """
 
-    mods = []
+    mods: list[ModuleType] = []
     mod = import_module(path)
     mods.append(mod)
     if hasattr(mod, "__path__"):
@@ -89,36 +100,7 @@ def walk_modules(path):
     return mods
 
 
-def extract_regex(regex, text, encoding="utf-8"):
-    """Extract a list of unicode strings from the given text/encoding using the following policies:
-
-    * if the regex contains a named group called "extract" that will be returned
-    * if the regex contains multiple numbered groups, all those will be returned (flattened)
-    * if the regex doesn't contain any group the entire regex matching is returned
-    """
-    warnings.warn(
-        "scrapy.utils.misc.extract_regex has moved to parsel.utils.extract_regex.",
-        ScrapyDeprecationWarning,
-        stacklevel=2,
-    )
-
-    if isinstance(regex, str):
-        regex = re.compile(regex, re.UNICODE)
-
-    try:
-        strings = [regex.search(text).group("extract")]  # named group
-    except Exception:
-        strings = regex.findall(text)  # full regex or numbered groups
-    strings = flatten(strings)
-
-    if isinstance(text, str):
-        return [replace_entities(s, keep=["lt", "amp"]) for s in strings]
-    return [
-        replace_entities(to_unicode(s, encoding), keep=["lt", "amp"]) for s in strings
-    ]
-
-
-def md5sum(file):
+def md5sum(file: IO[bytes]) -> str:
     """Calculate the md5 checksum of a file-like object without reading its
     whole content in memory.
 
@@ -126,7 +108,15 @@ def md5sum(file):
     >>> md5sum(BytesIO(b'file content to hash'))
     '784406af91dd5a54fbb9c84c2236595a'
     """
-    m = hashlib.md5()
+    warnings.warn(
+        (
+            "The scrapy.utils.misc.md5sum function is deprecated and will be "
+            "removed in a future version of Scrapy."
+        ),
+        ScrapyDeprecationWarning,
+        stacklevel=2,
+    )
+    m = hashlib.md5()  # noqa: S324
     while True:
         d = file.read(8096)
         if not d:
@@ -135,7 +125,7 @@ def md5sum(file):
     return m.hexdigest()
 
 
-def rel_has_nofollow(rel):
+def rel_has_nofollow(rel: str | None) -> bool:
     """Return True if link rel attribute has nofollow type"""
     return rel is not None and "nofollow" in rel.replace(",", " ").split()
 
@@ -157,6 +147,13 @@ def create_instance(objcls, settings, crawler, *args, **kwargs):
        Raises ``TypeError`` if the resulting instance is ``None`` (e.g. if an
        extension has not been implemented correctly).
     """
+    warnings.warn(
+        "The create_instance() function is deprecated. "
+        "Please use build_from_crawler() instead.",
+        category=ScrapyDeprecationWarning,
+        stacklevel=2,
+    )
+
     if settings is None:
         if crawler is None:
             raise ValueError("Specify at least one of settings and crawler.")
@@ -175,8 +172,41 @@ def create_instance(objcls, settings, crawler, *args, **kwargs):
     return instance
 
 
+def build_from_crawler(
+    objcls: type[T], crawler: Crawler, /, *args: Any, **kwargs: Any
+) -> T:
+    """Construct a class instance using its ``from_crawler`` or ``from_settings`` constructor.
+
+    .. versionadded:: 2.12
+
+    ``*args`` and ``**kwargs`` are forwarded to the constructor.
+
+    Raises ``TypeError`` if the resulting instance is ``None``.
+    """
+    if hasattr(objcls, "from_crawler"):
+        instance = objcls.from_crawler(crawler, *args, **kwargs)  # type: ignore[attr-defined]
+        method_name = "from_crawler"
+    elif hasattr(objcls, "from_settings"):
+        warnings.warn(
+            f"{objcls.__qualname__} has from_settings() but not from_crawler()."
+            " This is deprecated and calling from_settings() will be removed in a future"
+            " Scrapy version. You can implement a simple from_crawler() that calls"
+            " from_settings() with crawler.settings.",
+            category=ScrapyDeprecationWarning,
+            stacklevel=2,
+        )
+        instance = objcls.from_settings(crawler.settings, *args, **kwargs)  # type: ignore[attr-defined]
+        method_name = "from_settings"
+    else:
+        instance = objcls(*args, **kwargs)
+        method_name = "__new__"
+    if instance is None:
+        raise TypeError(f"{objcls.__qualname__}.{method_name} returned None")
+    return cast(T, instance)
+
+
 @contextmanager
-def set_environ(**kwargs):
+def set_environ(**kwargs: str) -> Iterator[None]:
     """Temporarily set environment variables inside the context manager and
     fully restore previous environment afterwards
     """
@@ -193,11 +223,11 @@ def set_environ(**kwargs):
                 os.environ[k] = v
 
 
-def walk_callable(node):
+def walk_callable(node: ast.AST) -> Iterable[ast.AST]:
     """Similar to ``ast.walk``, but walks only function body and skips nested
     functions defined within the node.
     """
-    todo = deque([node])
+    todo: deque[ast.AST] = deque([node])
     walked_func_def = False
     while todo:
         node = todo.popleft()
@@ -212,18 +242,18 @@ def walk_callable(node):
 _generator_callbacks_cache = LocalWeakReferencedCache(limit=128)
 
 
-def is_generator_with_return_value(callable):
+def is_generator_with_return_value(callable: Callable[..., Any]) -> bool:
     """
     Returns True if a callable is a generator function which includes a
     'return' statement with a value different than None, False otherwise
     """
     if callable in _generator_callbacks_cache:
-        return _generator_callbacks_cache[callable]
+        return bool(_generator_callbacks_cache[callable])
 
-    def returns_none(return_node):
+    def returns_none(return_node: ast.Return) -> bool:
         value = return_node.value
-        return (
-            value is None or isinstance(value, ast.NameConstant) and value.value is None
+        return value is None or (
+            isinstance(value, ast.Constant) and value.value is None
         )
 
     if inspect.isgeneratorfunction(callable):
@@ -243,13 +273,15 @@ def is_generator_with_return_value(callable):
         for node in walk_callable(tree):
             if isinstance(node, ast.Return) and not returns_none(node):
                 _generator_callbacks_cache[callable] = True
-                return _generator_callbacks_cache[callable]
+                return bool(_generator_callbacks_cache[callable])
 
     _generator_callbacks_cache[callable] = False
-    return _generator_callbacks_cache[callable]
+    return bool(_generator_callbacks_cache[callable])
 
 
-def warn_on_generator_with_return_value(spider, callable):
+def warn_on_generator_with_return_value(
+    spider: Spider, callable: Callable[..., Any]
+) -> None:
     """
     Logs a warning if a callable is a generator function and includes
     a 'return' statement with a value different than None

@@ -1,6 +1,11 @@
+from __future__ import annotations
+
 import warnings
+from typing import Any
 from unittest import TestCase
 from urllib.parse import urlparse
+
+import pytest
 
 from scrapy.downloadermiddlewares.redirect import RedirectMiddleware
 from scrapy.http import Request, Response
@@ -31,10 +36,10 @@ from scrapy.spiders import Spider
 
 
 class TestRefererMiddleware(TestCase):
-    req_meta = {}
-    resp_headers = {}
-    settings = {}
-    scenarii = [
+    req_meta: dict[str, Any] = {}
+    resp_headers: dict[str, str] = {}
+    settings: dict[str, Any] = {}
+    scenarii: list[tuple[str, str, bytes | None]] = [
         ("http://scrapytest.org", "http://scrapytest.org/", b"http://scrapytest.org"),
     ]
 
@@ -64,7 +69,7 @@ class MixinDefault:
     with some additional filtering of s3://
     """
 
-    scenarii = [
+    scenarii: list[tuple[str, str, bytes | None]] = [
         ("https://example.com/", "https://scrapy.org/", b"https://example.com/"),
         ("http://example.com/", "http://scrapy.org/", b"http://example.com/"),
         ("http://example.com/", "https://scrapy.org/", b"http://example.com/"),
@@ -85,7 +90,7 @@ class MixinDefault:
 
 
 class MixinNoReferrer:
-    scenarii = [
+    scenarii: list[tuple[str, str, bytes | None]] = [
         ("https://example.com/page.html", "https://example.com/", None),
         ("http://www.example.com/", "https://scrapy.org/", None),
         ("http://www.example.com/", "http://scrapy.org/", None),
@@ -95,7 +100,7 @@ class MixinNoReferrer:
 
 
 class MixinNoReferrerWhenDowngrade:
-    scenarii = [
+    scenarii: list[tuple[str, str, bytes | None]] = [
         # TLS to TLS: send non-empty referrer
         (
             "https://example.com/page.html",
@@ -177,7 +182,7 @@ class MixinNoReferrerWhenDowngrade:
 
 
 class MixinSameOrigin:
-    scenarii = [
+    scenarii: list[tuple[str, str, bytes | None]] = [
         # Same origin (protocol, host, port): send referrer
         (
             "https://example.com/page.html",
@@ -246,7 +251,7 @@ class MixinSameOrigin:
 
 
 class MixinOrigin:
-    scenarii = [
+    scenarii: list[tuple[str, str, bytes | None]] = [
         # TLS or non-TLS to TLS or non-TLS: referrer origin is sent (yes, even for downgrades)
         (
             "https://example.com/page.html",
@@ -270,7 +275,7 @@ class MixinOrigin:
 
 
 class MixinStrictOrigin:
-    scenarii = [
+    scenarii: list[tuple[str, str, bytes | None]] = [
         # TLS or non-TLS to TLS or non-TLS: referrer origin is sent but not for downgrades
         (
             "https://example.com/page.html",
@@ -298,7 +303,7 @@ class MixinStrictOrigin:
 
 
 class MixinOriginWhenCrossOrigin:
-    scenarii = [
+    scenarii: list[tuple[str, str, bytes | None]] = [
         # Same origin (protocol, host, port): send referrer
         (
             "https://example.com/page.html",
@@ -405,7 +410,7 @@ class MixinOriginWhenCrossOrigin:
 
 
 class MixinStrictOriginWhenCrossOrigin:
-    scenarii = [
+    scenarii: list[tuple[str, str, bytes | None]] = [
         # Same origin (protocol, host, port): send referrer
         (
             "https://example.com/page.html",
@@ -517,7 +522,7 @@ class MixinStrictOriginWhenCrossOrigin:
 
 
 class MixinUnsafeUrl:
-    scenarii = [
+    scenarii: list[tuple[str, str, bytes | None]] = [
         # TLS to TLS: send referrer
         (
             "https://example.com/sekrit.html",
@@ -683,6 +688,7 @@ class CustomPythonOrgPolicy(ReferrerPolicy):
             return b"https://python.org/"
         if scheme == "http":
             return b"http://python.org/"
+        return None
 
 
 class TestSettingsCustomPolicy(TestRefererMiddleware):
@@ -880,7 +886,48 @@ class TestSettingsPolicyByName(TestCase):
 
     def test_invalid_name(self):
         settings = Settings({"REFERRER_POLICY": "some-custom-unknown-policy"})
-        with self.assertRaises(RuntimeError):
+        with pytest.raises(RuntimeError):
+            RefererMiddleware(settings)
+
+    def test_multiple_policy_tokens(self):
+        # test parsing without space(s) after the comma
+        settings1 = Settings(
+            {
+                "REFERRER_POLICY": (
+                    f"some-custom-unknown-policy,"
+                    f"{POLICY_SAME_ORIGIN},"
+                    f"{POLICY_STRICT_ORIGIN_WHEN_CROSS_ORIGIN},"
+                    f"another-custom-unknown-policy"
+                )
+            }
+        )
+        mw1 = RefererMiddleware(settings1)
+        self.assertEqual(mw1.default_policy, StrictOriginWhenCrossOriginPolicy)
+
+        # test parsing with space(s) after the comma
+        settings2 = Settings(
+            {
+                "REFERRER_POLICY": (
+                    f"{POLICY_STRICT_ORIGIN_WHEN_CROSS_ORIGIN},"
+                    f"    another-custom-unknown-policy,"
+                    f"    {POLICY_UNSAFE_URL}"
+                )
+            }
+        )
+        mw2 = RefererMiddleware(settings2)
+        self.assertEqual(mw2.default_policy, UnsafeUrlPolicy)
+
+    def test_multiple_policy_tokens_all_invalid(self):
+        settings = Settings(
+            {
+                "REFERRER_POLICY": (
+                    "some-custom-unknown-policy,"
+                    "another-custom-unknown-policy,"
+                    "yet-another-custom-unknown-policy"
+                )
+            }
+        )
+        with pytest.raises(RuntimeError):
             RefererMiddleware(settings)
 
 
@@ -920,7 +967,9 @@ class TestPolicyHeaderPrecedence004(
 
 class TestReferrerOnRedirect(TestRefererMiddleware):
     settings = {"REFERRER_POLICY": "scrapy.spidermiddlewares.referer.UnsafeUrlPolicy"}
-    scenarii = [
+    scenarii: list[
+        tuple[str, str, tuple[tuple[int, str], ...], bytes | None, bytes | None]
+    ] = [  # type: ignore[assignment]
         (
             "http://scrapytest.org/1",  # parent
             "http://scrapytest.org/2",  # target

@@ -1,5 +1,6 @@
 from unittest import mock
 
+import pytest
 from twisted.internet import error, reactor
 from twisted.internet.defer import Deferred, DeferredList, maybeDeferred
 from twisted.python import failure
@@ -11,10 +12,10 @@ from scrapy.exceptions import IgnoreRequest, NotConfigured
 from scrapy.http import Request, Response, TextResponse
 from scrapy.http.request import NO_CALLBACK
 from scrapy.settings import Settings
-from tests.test_robotstxt_interface import reppy_available, rerp_available
+from tests.test_robotstxt_interface import rerp_available
 
 
-class RobotsTxtMiddlewareTest(unittest.TestCase):
+class TestRobotsTxtMiddleware(unittest.TestCase):
     def setUp(self):
         self.crawler = mock.MagicMock()
         self.crawler.settings = Settings()
@@ -26,7 +27,8 @@ class RobotsTxtMiddlewareTest(unittest.TestCase):
     def test_robotstxt_settings(self):
         self.crawler.settings = Settings()
         self.crawler.settings.set("USER_AGENT", "CustomAgent")
-        self.assertRaises(NotConfigured, RobotsTxtMiddleware, self.crawler)
+        with pytest.raises(NotConfigured):
+            RobotsTxtMiddleware(self.crawler)
 
     def _get_successful_crawler(self):
         crawler = self.crawler
@@ -40,9 +42,7 @@ Disallow: /wiki/K%C3%A4ytt%C3%A4j%C3%A4:
 Disallow: /wiki/Käyttäjä:
 User-Agent: UnicödeBöt
 Disallow: /some/randome/page.html
-""".encode(
-            "utf-8"
-        )
+""".encode()
         response = TextResponse("http://site.local/robots.txt", body=ROBOTS)
 
         def return_response(request):
@@ -118,7 +118,7 @@ Disallow: /some/randome/page.html
     def test_robotstxt_garbage(self):
         # garbage response should be discarded, equal 'allow all'
         middleware = RobotsTxtMiddleware(self._get_garbage_crawler())
-        deferred = DeferredList(
+        return DeferredList(
             [
                 self.assertNotIgnored(Request("http://site.local"), middleware),
                 self.assertNotIgnored(Request("http://site.local/allowed"), middleware),
@@ -129,7 +129,6 @@ Disallow: /some/randome/page.html
             ],
             fireOnOneErrback=True,
         )
-        return deferred
 
     def _get_emptybody_crawler(self):
         crawler = self.crawler
@@ -243,11 +242,11 @@ Disallow: /some/randome/page.html
     def assertRobotsTxtRequested(self, base_url):
         calls = self.crawler.engine.download.call_args_list
         request = calls[0][0][0]
-        self.assertEqual(request.url, f"{base_url}/robots.txt")
-        self.assertEqual(request.callback, NO_CALLBACK)
+        assert request.url == f"{base_url}/robots.txt"
+        assert request.callback == NO_CALLBACK
 
 
-class RobotsTxtMiddlewareWithRerpTest(RobotsTxtMiddlewareTest):
+class TestRobotsTxtMiddlewareWithRerp(TestRobotsTxtMiddleware):
     if not rerp_available():
         skip = "Rerp parser is not installed"
 
@@ -255,15 +254,4 @@ class RobotsTxtMiddlewareWithRerpTest(RobotsTxtMiddlewareTest):
         super().setUp()
         self.crawler.settings.set(
             "ROBOTSTXT_PARSER", "scrapy.robotstxt.RerpRobotParser"
-        )
-
-
-class RobotsTxtMiddlewareWithReppyTest(RobotsTxtMiddlewareTest):
-    if not reppy_available():
-        skip = "Reppy parser is not installed"
-
-    def setUp(self):
-        super().setUp()
-        self.crawler.settings.set(
-            "ROBOTSTXT_PARSER", "scrapy.robotstxt.ReppyRobotParser"
         )

@@ -1,5 +1,7 @@
 import unittest
 
+import pytest
+
 from scrapy.link import Link
 
 
@@ -49,9 +51,9 @@ class LinkTest(unittest.TestCase):
         l1 = Link(
             "http://www.example.com", text="test", fragment="something", nofollow=True
         )
-        l2 = eval(repr(l1))
+        l2 = eval(repr(l1))  # pylint: disable=eval-used
         self._assert_same_links(l1, l2)
 
     def test_bytes_url(self):
-        with self.assertRaises(TypeError):
+        with pytest.raises(TypeError):
             Link(b"http://www.example.com/\xc2\xa3")

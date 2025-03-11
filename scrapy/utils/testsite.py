@@ -1,6 +1,14 @@
+import warnings
 from urllib.parse import urljoin
 
 from twisted.web import resource, server, static, util
+
+from scrapy.exceptions import ScrapyDeprecationWarning
+
+warnings.warn(
+    "The scrapy.utils.testsite module is deprecated.",
+    ScrapyDeprecationWarning,
+)
 
 
 class SiteTest:
@@ -15,12 +23,12 @@ class SiteTest:
         super().tearDown()
         self.site.stopListening()
 
-    def url(self, path):
+    def url(self, path: str) -> str:
         return urljoin(self.baseurl, path)
 
 
 class NoMetaRefreshRedirect(util.Redirect):
-    def render(self, request):
+    def render(self, request: server.Request) -> bytes:
         content = util.Redirect.render(self, request)
         return content.replace(
             b'http-equiv="refresh"', b'http-no-equiv="do-not-refresh-me"'
@@ -48,7 +56,7 @@ def test_site():
 
 
 if __name__ == "__main__":
-    from twisted.internet import reactor
+    from twisted.internet import reactor  # pylint: disable=ungrouped-imports
 
     port = reactor.listenTCP(0, test_site(), interface="127.0.0.1")
     print(f"http://localhost:{port.getHost().port}/")

@@ -1,7 +1,8 @@
 import asyncio
+from gzip import BadGzipFile
 from unittest import mock
 
-from pytest import mark
+import pytest
 from twisted.internet import defer
 from twisted.internet.defer import Deferred
 from twisted.python.failure import Failure
@@ -15,20 +16,18 @@ from scrapy.utils.python import to_bytes
 from scrapy.utils.test import get_crawler, get_from_asyncio_queue
 
 
-class ManagerTestCase(TestCase):
+class TestManagerBase(TestCase):
     settings_dict = None
 
     def setUp(self):
         self.crawler = get_crawler(Spider, self.settings_dict)
         self.spider = self.crawler._create_spider("foo")
         self.mwman = DownloaderMiddlewareManager.from_crawler(self.crawler)
-        # some mw depends on stats collector
-        self.crawler.stats.open_spider(self.spider)
-        return self.mwman.open_spider(self.spider)
+        self.crawler.engine = self.crawler._create_engine()
+        return self.crawler.engine.open_spider(self.spider, start_requests=())
 
     def tearDown(self):
-        self.crawler.stats.close_spider(self.spider, "")
-        return self.mwman.close_spider(self.spider)
+        return self.crawler.engine.close_spider(self.spider)
 
     def _download(self, request, response=None):
         """Executes downloader mw manager's download method and returns
@@ -38,7 +37,7 @@ class ManagerTestCase(TestCase):
         if not response:
             response = Response(request.url)
 
-        def download_func(**kwargs):
+        def download_func(request, spider):
             return response
 
         dfd = self.mwman.download(download_func, request, self.spider)
@@ -52,14 +51,14 @@ class ManagerTestCase(TestCase):
         return ret
 
 
-class DefaultsTest(ManagerTestCase):
+class TestDefaults(TestManagerBase):
     """Tests default behavior with default settings"""
 
     def test_request_response(self):
         req = Request("http://example.com/index.html")
         resp = Response(req.url, status=200)
         ret = self._download(req, resp)
-        self.assertTrue(isinstance(ret, Response), "Non-response returned")
+        assert isinstance(ret, Response), "Non-response returned"
 
     def test_3xx_and_invalid_gzipped_body_must_redirect(self):
         """Regression test for a failure when redirecting a compressed
@@ -70,7 +69,7 @@ class DefaultsTest(ManagerTestCase):
         In particular when some website returns a 30x response with header
         'Content-Encoding: gzip' giving as result the error below:
 
-            exceptions.IOError: Not a gzipped file
+            BadGzipFile: Not a gzipped file (...)
 
         """
         req = Request("http://example.com")
@@ -87,11 +86,9 @@ class DefaultsTest(ManagerTestCase):
             },
         )
         ret = self._download(request=req, response=resp)
-        self.assertTrue(isinstance(ret, Request), f"Not redirected: {ret!r}")
-        self.assertEqual(
-            to_bytes(ret.url),
-            resp.headers["Location"],
-            "Not redirected to location header",
+        assert isinstance(ret, Request), f"Not redirected: {ret!r}"
+        assert to_bytes(ret.url) == resp.headers["Location"], (
+            "Not redirected to location header"
         )
 
     def test_200_and_invalid_gzipped_body_must_fail(self):
@@ -108,10 +105,11 @@ class DefaultsTest(ManagerTestCase):
                 "Location": "http://example.com/login",
             },
         )
-        self.assertRaises(IOError, self._download, request=req, response=resp)
+        with pytest.raises(BadGzipFile):
+            self._download(request=req, response=resp)
 
 
-class ResponseFromProcessRequestTest(ManagerTestCase):
+class TestResponseFromProcessRequest(TestManagerBase):
     """Tests middleware returning a response from process_request."""
 
     def test_download_func_not_called(self):
@@ -130,11 +128,11 @@ class ResponseFromProcessRequestTest(ManagerTestCase):
         dfd.addBoth(results.append)
         self._wait(dfd)
 
-        self.assertIs(results[0], resp)
-        self.assertFalse(download_func.called)
+        assert results[0] is resp
+        assert not download_func.called
 
 
-class ProcessRequestInvalidOutput(ManagerTestCase):
+class TestProcessRequestInvalidOutput(TestManagerBase):
     """Invalid return value for process_request method should raise an exception"""
 
     def test_invalid_process_request(self):
@@ -149,11 +147,11 @@ class ProcessRequestInvalidOutput(ManagerTestCase):
         dfd = self.mwman.download(download_func, req, self.spider)
         results = []
         dfd.addBoth(results.append)
-        self.assertIsInstance(results[0], Failure)
-        self.assertIsInstance(results[0].value, _InvalidOutput)
+        assert isinstance(results[0], Failure)
+        assert isinstance(results[0].value, _InvalidOutput)
 
 
-class ProcessResponseInvalidOutput(ManagerTestCase):
+class TestProcessResponseInvalidOutput(TestManagerBase):
     """Invalid return value for process_response method should raise an exception"""
 
     def test_invalid_process_response(self):
@@ -168,11 +166,11 @@ class ProcessResponseInvalidOutput(ManagerTestCase):
         dfd = self.mwman.download(download_func, req, self.spider)
         results = []
         dfd.addBoth(results.append)
-        self.assertIsInstance(results[0], Failure)
-        self.assertIsInstance(results[0].value, _InvalidOutput)
+        assert isinstance(results[0], Failure)
+        assert isinstance(results[0].value, _InvalidOutput)
 
 
-class ProcessExceptionInvalidOutput(ManagerTestCase):
+class TestProcessExceptionInvalidOutput(TestManagerBase):
     """Invalid return value for process_exception method should raise an exception"""
 
     def test_invalid_process_exception(self):
@@ -180,7 +178,7 @@ class ProcessExceptionInvalidOutput(ManagerTestCase):
 
         class InvalidProcessExceptionMiddleware:
             def process_request(self, request, spider):
-                raise Exception()
+                raise RuntimeError
 
             def process_exception(self, request, exception, spider):
                 return 1
@@ -190,11 +188,11 @@ class ProcessExceptionInvalidOutput(ManagerTestCase):
         dfd = self.mwman.download(download_func, req, self.spider)
         results = []
         dfd.addBoth(results.append)
-        self.assertIsInstance(results[0], Failure)
-        self.assertIsInstance(results[0].value, _InvalidOutput)
+        assert isinstance(results[0], Failure)
+        assert isinstance(results[0].value, _InvalidOutput)
 
 
-class MiddlewareUsingDeferreds(ManagerTestCase):
+class TestMiddlewareUsingDeferreds(TestManagerBase):
     """Middlewares using Deferreds should work"""
 
     def test_deferred(self):
@@ -218,12 +216,12 @@ class MiddlewareUsingDeferreds(ManagerTestCase):
         dfd.addBoth(results.append)
         self._wait(dfd)
 
-        self.assertIs(results[0], resp)
-        self.assertFalse(download_func.called)
+        assert results[0] is resp
+        assert not download_func.called
 
 
-@mark.usefixtures("reactor_pytest")
-class MiddlewareUsingCoro(ManagerTestCase):
+@pytest.mark.usefixtures("reactor_pytest")
+class TestMiddlewareUsingCoro(TestManagerBase):
     """Middlewares using asyncio coroutines should work"""
 
     def test_asyncdef(self):
@@ -242,18 +240,17 @@ class MiddlewareUsingCoro(ManagerTestCase):
         dfd.addBoth(results.append)
         self._wait(dfd)
 
-        self.assertIs(results[0], resp)
-        self.assertFalse(download_func.called)
+        assert results[0] is resp
+        assert not download_func.called
 
-    @mark.only_asyncio()
+    @pytest.mark.only_asyncio
     def test_asyncdef_asyncio(self):
         resp = Response("http://example.com/index.html")
 
         class CoroMiddleware:
             async def process_request(self, request, spider):
                 await asyncio.sleep(0.1)
-                result = await get_from_asyncio_queue(resp)
-                return result
+                return await get_from_asyncio_queue(resp)
 
         self.mwman._add_middleware(CoroMiddleware())
         req = Request("http://example.com/index.html")
@@ -263,5 +260,5 @@ class MiddlewareUsingCoro(ManagerTestCase):
         dfd.addBoth(results.append)
         self._wait(dfd)
 
-        self.assertIs(results[0], resp)
-        self.assertFalse(download_func.called)
+        assert results[0] is resp
+        assert not download_func.called

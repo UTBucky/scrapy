@@ -1,9 +1,13 @@
+import contextlib
 import shutil
 import sys
 import tempfile
 import warnings
 from pathlib import Path
+from tempfile import mkdtemp
+from unittest import mock
 
+import pytest
 from twisted.trial import unittest
 from zope.interface.verify import verifyObject
 
@@ -20,10 +24,8 @@ module_dir = Path(__file__).resolve().parent
 
 
 def _copytree(source: Path, target: Path):
-    try:
+    with contextlib.suppress(shutil.Error):
         shutil.copytree(source, target)
-    except shutil.Error:
-        pass
 
 
 class SpiderLoaderTest(unittest.TestCase):
@@ -96,18 +98,35 @@ class SpiderLoaderTest(unittest.TestCase):
         self.spider_loader = SpiderLoader.from_settings(settings)
         assert len(self.spider_loader._spiders) == 0
 
+    def test_load_spider_module_from_addons(self):
+        module = "tests.test_spiderloader.spiders_from_addons.spider0"
+
+        class SpiderModuleAddon:
+            @classmethod
+            def update_pre_crawler_settings(cls, settings):
+                settings.set(
+                    "SPIDER_MODULES",
+                    [module],
+                    "project",
+                )
+
+        runner = CrawlerRunner({"ADDONS": {SpiderModuleAddon: 1}})
+
+        crawler = runner.create_crawler("spider_from_addon")
+        self.assertTrue(issubclass(crawler.spidercls, scrapy.Spider))
+        self.assertEqual(crawler.spidercls.name, "spider_from_addon")
+        self.assertTrue(len(crawler.settings["SPIDER_MODULES"]) == 1)
+
     def test_crawler_runner_loading(self):
         module = "tests.test_spiderloader.test_spiders.spider1"
         runner = CrawlerRunner(
             {
                 "SPIDER_MODULES": [module],
-                "REQUEST_FINGERPRINTER_IMPLEMENTATION": "2.7",
             }
         )
 
-        self.assertRaisesRegex(
-            KeyError, "Spider not found", runner.create_crawler, "spider2"
-        )
+        with pytest.raises(KeyError, match="Spider not found"):
+            runner.create_crawler("spider2")
 
         crawler = runner.create_crawler("spider1")
         self.assertTrue(issubclass(crawler.spidercls, scrapy.Spider))
@@ -116,7 +135,8 @@ class SpiderLoaderTest(unittest.TestCase):
     def test_bad_spider_modules_exception(self):
         module = "tests.test_spiderloader.test_spiders.doesnotexist"
         settings = Settings({"SPIDER_MODULES": [module]})
-        self.assertRaises(ImportError, SpiderLoader.from_settings, settings)
+        with pytest.raises(ImportError):
+            SpiderLoader.from_settings(settings)
 
     def test_bad_spider_modules_warning(self):
         with warnings.catch_warnings(record=True) as w:
@@ -135,12 +155,40 @@ class SpiderLoaderTest(unittest.TestCase):
             spiders = spider_loader.list()
             self.assertEqual(spiders, [])
 
+    def test_syntax_error_exception(self):
+        module = "tests.test_spiderloader.test_spiders.spider1"
+        with mock.patch.object(SpiderLoader, "_load_spiders") as m:
+            m.side_effect = SyntaxError
+            settings = Settings({"SPIDER_MODULES": [module]})
+            with pytest.raises(SyntaxError):
+                SpiderLoader.from_settings(settings)
+
+    def test_syntax_error_warning(self):
+        with (
+            warnings.catch_warnings(record=True) as w,
+            mock.patch.object(SpiderLoader, "_load_spiders") as m,
+        ):
+            m.side_effect = SyntaxError
+            module = "tests.test_spiderloader.test_spiders.spider1"
+            settings = Settings(
+                {"SPIDER_MODULES": [module], "SPIDER_LOADER_WARN_ONLY": True}
+            )
+            spider_loader = SpiderLoader.from_settings(settings)
+            if str(w[0].message).startswith("_SixMetaPathImporter"):
+                # needed on 3.10 because of https://github.com/benjaminp/six/issues/349,
+                # at least until all six versions we can import (including botocore.vendored.six)
+                # are updated to 1.16.0+
+                w.pop(0)
+            self.assertIn("Could not load spiders from module", str(w[0].message))
+
+            spiders = spider_loader.list()
+            self.assertEqual(spiders, [])
+
 
 class DuplicateSpiderNameLoaderTest(unittest.TestCase):
     def setUp(self):
         orig_spiders_dir = module_dir / "test_spiders"
-        self.tmpdir = Path(self.mktemp())
-        self.tmpdir.mkdir()
+        self.tmpdir = Path(mkdtemp())
         self.spiders_dir = self.tmpdir / "test_spiders_xxx"
         _copytree(orig_spiders_dir, self.spiders_dir)
         sys.path.append(str(self.tmpdir))

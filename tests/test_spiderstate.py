@@ -1,7 +1,8 @@
 import shutil
-from datetime import datetime
-from pathlib import Path
+from datetime import datetime, timezone
+from tempfile import mkdtemp
 
+import pytest
 from twisted.trial import unittest
 
 from scrapy.exceptions import NotConfigured
@@ -12,11 +13,10 @@ from scrapy.utils.test import get_crawler
 
 class SpiderStateTest(unittest.TestCase):
     def test_store_load(self):
-        jobdir = self.mktemp()
-        Path(jobdir).mkdir()
+        jobdir = mkdtemp()
         try:
             spider = Spider(name="default")
-            dt = datetime.now()
+            dt = datetime.now(tz=timezone.utc)
 
             ss = SpiderState(jobdir)
             ss.spider_opened(spider)
@@ -43,4 +43,5 @@ class SpiderStateTest(unittest.TestCase):
 
     def test_not_configured(self):
         crawler = get_crawler(Spider)
-        self.assertRaises(NotConfigured, SpiderState.from_crawler, crawler)
+        with pytest.raises(NotConfigured):
+            SpiderState.from_crawler(crawler)

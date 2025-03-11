@@ -1,7 +1,10 @@
 import unittest
+from abc import ABCMeta
 from unittest import mock
 
-from scrapy.item import ABCMeta, Field, Item, ItemMeta
+import pytest
+
+from scrapy.item import Field, Item, ItemMeta
 
 
 class ItemTest(unittest.TestCase):
@@ -21,7 +24,8 @@ class ItemTest(unittest.TestCase):
             name = Field()
 
         i = TestItem()
-        self.assertRaises(KeyError, i.__getitem__, "name")
+        with pytest.raises(KeyError):
+            i["name"]
 
         i2 = TestItem(name="john doe")
         self.assertEqual(i2["name"], "john doe")
@@ -32,15 +36,18 @@ class ItemTest(unittest.TestCase):
         i4 = TestItem(i3)
         self.assertEqual(i4["name"], "john doe")
 
-        self.assertRaises(KeyError, TestItem, {"name": "john doe", "other": "foo"})
+        with pytest.raises(KeyError):
+            TestItem({"name": "john doe", "other": "foo"})
 
     def test_invalid_field(self):
         class TestItem(Item):
             pass
 
         i = TestItem()
-        self.assertRaises(KeyError, i.__setitem__, "field", "text")
-        self.assertRaises(KeyError, i.__getitem__, "field")
+        with pytest.raises(KeyError):
+            i["field"] = "text"
+        with pytest.raises(KeyError):
+            i["field"]
 
     def test_repr(self):
         class TestItem(Item):
@@ -54,7 +61,7 @@ class ItemTest(unittest.TestCase):
 
         self.assertEqual(itemrepr, "{'name': 'John Doe', 'number': 123}")
 
-        i2 = eval(itemrepr)
+        i2 = eval(itemrepr)  # pylint: disable=eval-used
         self.assertEqual(i2["name"], "John Doe")
         self.assertEqual(i2["number"], 123)
 
@@ -71,14 +78,16 @@ class ItemTest(unittest.TestCase):
             name = Field()
 
         i = TestItem()
-        self.assertRaises(AttributeError, getattr, i, "name")
+        with pytest.raises(AttributeError):
+            i.name
 
     def test_raise_setattr(self):
         class TestItem(Item):
             name = Field()
 
         i = TestItem()
-        self.assertRaises(AttributeError, setattr, i, "name", "john")
+        with pytest.raises(AttributeError):
+            i.name = "john"
 
     def test_custom_methods(self):
         class TestItem(Item):
@@ -91,7 +100,8 @@ class ItemTest(unittest.TestCase):
                 self["name"] = name
 
         i = TestItem()
-        self.assertRaises(KeyError, i.get_name)
+        with pytest.raises(KeyError):
+            i.get_name()
         i["name"] = "lala"
         self.assertEqual(i.get_name(), "lala")
         i.change_name("other")
@@ -222,7 +232,8 @@ class ItemTest(unittest.TestCase):
         class D(B, C):
             pass
 
-        self.assertRaises(KeyError, D, not_allowed="value")
+        with pytest.raises(KeyError):
+            D(not_allowed="value")
         self.assertEqual(D(save="X")["save"], "X")
         self.assertEqual(D.fields, {"save": {"default": "A"}, "load": {"default": "A"}})
 
@@ -230,7 +241,8 @@ class ItemTest(unittest.TestCase):
         class E(C, B):
             pass
 
-        self.assertRaises(KeyError, E, not_allowed="value")
+        with pytest.raises(KeyError):
+            E(not_allowed="value")
         self.assertEqual(E(save="X")["save"], "X")
         self.assertEqual(E.fields, {"save": {"default": "A"}, "load": {"default": "A"}})
 
@@ -273,9 +285,7 @@ class ItemMetaTest(unittest.TestCase):
                 def f(self):
                     # For rationale of this see:
                     # https://github.com/python/cpython/blob/ee1a81b77444c6715cbe610e951c655b6adab88b/Lib/test/test_super.py#L222
-                    return (
-                        __class__  # noqa  https://github.com/scrapy/scrapy/issues/2836
-                    )
+                    return __class__
 
             MyItem()
 
@@ -290,13 +300,9 @@ class ItemMetaTest(unittest.TestCase):
 class ItemMetaClassCellRegression(unittest.TestCase):
     def test_item_meta_classcell_regression(self):
         class MyItem(Item, metaclass=ItemMeta):
-            def __init__(self, *args, **kwargs):
+            def __init__(self, *args, **kwargs):  # pylint: disable=useless-parent-delegation
                 # This call to super() trigger the __classcell__ propagation
                 # requirement. When not done properly raises an error:
                 # TypeError: __class__ set to <class '__main__.MyItem'>
                 # defining 'MyItem' as <class '__main__.MyItem'>
                 super().__init__(*args, **kwargs)
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -1,4 +1,3 @@
-import unittest
 import warnings
 from functools import partial
 from unittest import mock
@@ -10,7 +9,7 @@ from scrapy.utils.misc import (
 
 
 def _indentation_error(*args, **kwargs):
-    raise IndentationError()
+    raise IndentationError
 
 
 def top_level_return_something():
@@ -32,7 +31,6 @@ def top_level_return_none():
 https://example.org
 """
     yield url
-    return
 
 
 def generator_that_returns_stuff():
@@ -41,7 +39,7 @@ def generator_that_returns_stuff():
     return 3
 
 
-class UtilsMiscPy3TestCase(unittest.TestCase):
+class TestUtilsMisc:
     def test_generators_return_something(self):
         def f1():
             yield 1
@@ -78,36 +76,34 @@ https://example.org
 
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, top_level_return_something)
-            self.assertEqual(len(w), 1)
-            self.assertIn(
-                'The "NoneType.top_level_return_something" method is a generator',
-                str(w[0].message),
+            assert len(w) == 1
+            assert (
+                'The "NoneType.top_level_return_something" method is a generator'
+                in str(w[0].message)
             )
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, f1)
-            self.assertEqual(len(w), 1)
-            self.assertIn('The "NoneType.f1" method is a generator', str(w[0].message))
+            assert len(w) == 1
+            assert 'The "NoneType.f1" method is a generator' in str(w[0].message)
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, g1)
-            self.assertEqual(len(w), 1)
-            self.assertIn('The "NoneType.g1" method is a generator', str(w[0].message))
+            assert len(w) == 1
+            assert 'The "NoneType.g1" method is a generator' in str(w[0].message)
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, h1)
-            self.assertEqual(len(w), 1)
-            self.assertIn('The "NoneType.h1" method is a generator', str(w[0].message))
+            assert len(w) == 1
+            assert 'The "NoneType.h1" method is a generator' in str(w[0].message)
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, i1)
-            self.assertEqual(len(w), 1)
-            self.assertIn('The "NoneType.i1" method is a generator', str(w[0].message))
+            assert len(w) == 1
+            assert 'The "NoneType.i1" method is a generator' in str(w[0].message)
 
     def test_generators_return_none(self):
         def f2():
             yield 1
-            return None
 
         def g2():
             yield 1
-            return
 
         def h2():
             yield 1
@@ -132,7 +128,6 @@ https://example.org
 https://example.org
         """
             yield url
-            return
 
         def l2():
             return
@@ -148,28 +143,28 @@ https://example.org
 
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, top_level_return_none)
-            self.assertEqual(len(w), 0)
+            assert len(w) == 0
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, f2)
-            self.assertEqual(len(w), 0)
+            assert len(w) == 0
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, g2)
-            self.assertEqual(len(w), 0)
+            assert len(w) == 0
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, h2)
-            self.assertEqual(len(w), 0)
+            assert len(w) == 0
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, i2)
-            self.assertEqual(len(w), 0)
+            assert len(w) == 0
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, j2)
-            self.assertEqual(len(w), 0)
+            assert len(w) == 0
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, k2)
-            self.assertEqual(len(w), 0)
+            assert len(w) == 0
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, l2)
-            self.assertEqual(len(w), 0)
+            assert len(w) == 0
 
     def test_generators_return_none_with_decorator(self):
         def decorator(func):
@@ -181,12 +176,10 @@ https://example.org
         @decorator
         def f3():
             yield 1
-            return None
 
         @decorator
         def g3():
             yield 1
-            return
 
         @decorator
         def h3():
@@ -215,7 +208,6 @@ https://example.org
 https://example.org
         """
             yield url
-            return
 
         @decorator
         def l3():
@@ -232,28 +224,28 @@ https://example.org
 
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, top_level_return_none)
-            self.assertEqual(len(w), 0)
+            assert len(w) == 0
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, f3)
-            self.assertEqual(len(w), 0)
+            assert len(w) == 0
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, g3)
-            self.assertEqual(len(w), 0)
+            assert len(w) == 0
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, h3)
-            self.assertEqual(len(w), 0)
+            assert len(w) == 0
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, i3)
-            self.assertEqual(len(w), 0)
+            assert len(w) == 0
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, j3)
-            self.assertEqual(len(w), 0)
+            assert len(w) == 0
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, k3)
-            self.assertEqual(len(w), 0)
+            assert len(w) == 0
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, l3)
-            self.assertEqual(len(w), 0)
+            assert len(w) == 0
 
     @mock.patch(
         "scrapy.utils.misc.is_generator_with_return_value", new=_indentation_error
@@ -261,8 +253,8 @@ https://example.org
     def test_indentation_error(self):
         with warnings.catch_warnings(record=True) as w:
             warn_on_generator_with_return_value(None, top_level_return_none)
-            self.assertEqual(len(w), 1)
-            self.assertIn("Unable to determine", str(w[0].message))
+            assert len(w) == 1
+            assert "Unable to determine" in str(w[0].message)
 
     def test_partial(self):
         def cb(arg1, arg2):
